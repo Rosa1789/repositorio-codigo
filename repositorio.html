@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Repo_Control — Repositorio SQL & Python</title>
+
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+/* =======================
+   TODO EL CSS ORIGINAL
+======================= */
+:root {
+  --bg: #f3f8fc;
+  --surface: #ffffff;
+  --surface2: #f1f5f9;
+  --border: #e2e8f0;
+  --accent-sql: #0d7bdc;
+  --accent-py: #e0ad00;
+  --accent-green: #148a4b;
+  --text: #1e293b;
+  --text-dim: #475569;
+  --text-bright: #020617;
+  --danger: #f38ba8;
+}
+
+/* Modal básico */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  display: none;
+  justify-content: center;
+  align-items: center;
+}
+
+.modal-content {
+  background: #fff;
+  padding: 20px;
+  width: 420px;
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.modal-content input,
+.modal-content textarea,
+.modal-content select {
+  width: 100%;
+  padding: 8px;
+}
+</style>
+</head>
+
+<body>
+<div class="app">
+
+<button onclick="openModal()">➕ Nuevo</button>
+
+<!-- GRID -->
+<div id="cardsGrid"></div>
+
+<!-- TOAST -->
+<div class="toast" id="toast">✅ <span id="toastMsg">Guardado correctamente</span></div>
+
+<!-- =======================
+     MODAL FORMULARIO
+======================= -->
+<div class="modal" id="modal">
+  <div class="modal-content">
+    <input id="fName" placeholder="Nombre" />
+    <select id="fType">
+      <option value="sql">SQL</option>
+      <option value="python">Python</option>
+    </select>
+
+    <textarea id="fDesc" placeholder="Descripción"></textarea>
+    <input id="fTags" placeholder="Tags (coma separada)" />
+
+    <!-- ✅ AQUÍ VA EL AUTOR (CORRECTO) -->
+    <input id="fAutor" placeholder="👤 Autor" autocomplete="off" />
+
+    <textarea id="fCode" placeholder="Código"></textarea>
+
+    <button onclick="saveEntry()">Guardar</button>
+    <button onclick="closeModal()">Cancelar</button>
+  </div>
+</div>
+
+<script>
+/* CONFIG GITHUB */
+const GITHUB_USER = "Rosa1789";
+const REPO = "repositorio-código";
+const TOKEN = "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";
+let entries = [];
+
+function openModal() {
+  document.getElementById('modal').style.display = 'flex';
+}
+function closeModal() {
+  document.getElementById('modal').style.display = 'none';
+}
+
+function toast(msg, color='var(--accent-green)') {
+  const t = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent = msg;
+  t.style.background = color;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function escHtml(str){
+  return String(str).replace(/[&<>"]/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'
+  })[c]);
+}
+
+async function loadData(){
+  const res = await fetch(`https://api.github.com/repos/${GITHUB_USER}/${REPO}/contents`);
+  const folders = await res.json();
+  const all = [];
+
+  for (const f of folders){
+    if (f.type !== 'dir') continue;
+    const files = await (await fetch(f.url)).json();
+    const meta = {};
+
+    for (const j of files.filter(x => x.name.endsWith('.json'))){
+      meta[j.name] = await (await fetch(j.download_url)).json();
+    }
+
+    for (const c of files.filter(x => !x.name.endsWith('.json'))){
+      const base = c.name.replace(/\.[^.]+$/, '');
+      const m = meta[base + '.json'] || {};
+      const code = await (await fetch(c.download_url)).text();
+
+      all.push({
+        name: base,
+        type: f.name,
+        desc: m.descripcion || '',
+        tags: m.tags || [],
+        autor: m.autor || '',
+        code,
+        createdAt: m.fecha || new Date().toISOString()
+      });
+    }
+  }
+
+  entries = all;
+  renderCards();
+}
+
+function renderCards(){
+  cardsGrid.innerHTML = entries.map(e => `
+    <pre>
+${escHtml(e.name)}
+📅 ${new Date(e.createdAt).toLocaleDateString()}
+${e.autor ? '👤 ' + escHtml(e.autor) : ''}
+${escHtml(e.code)}
+    </pre>
+  `).join('');
+}
+
+async function ghPut(path, content){
+  let sha;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${GITHUB_USER}/${REPO}/contents/${path}`, {
+      headers:{Authorization:`token ${TOKEN}`}
+    });
+    if (r.ok) sha = (await r.json()).sha;
+  } catch {}
+
+  return fetch(`https://api.github.com/repos/${GITHUB_USER}/${REPO}/contents/${path}`, {
+    method:'PUT',
+    headers:{
+      Authorization:`token ${TOKEN}`,
+      'Content-Type':'application/json'
+    },
+    body:JSON.stringify({
+      message:`${sha?'Update':'Add'} ${path}`,
+      content,
+      ...(sha && {sha})
+    })
+  });
+}
+
+async function saveEntry(){
+  const file = fName.value.trim().replace(/\s+/g,'_');
+  const type = fType.value;
+  const ext = type === 'sql' ? 'sql' : 'py';
+
+  const meta = {
+    descripcion: fDesc.value.trim(),
+    tags: fTags.value.split(',').map(t=>t.trim()).filter(Boolean),
+    autor: fAutor.value.trim(),
+    fecha: new Date().toISOString()
+  };
+
+  await Promise.all([
+    ghPut(`${type}/${file}.${ext}`, btoa(unescape(encodeURIComponent(fCode.value)))),
+    ghPut(`${type}/${file}.json`, btoa(JSON.stringify(meta,null,2)))
+  ]);
+
+  closeModal();
+  toast('Guardado en GitHub 🚀');
+  loadData();
+}
+
+loadData();
+</script>
+
+</div>
+</body>
+</html>
